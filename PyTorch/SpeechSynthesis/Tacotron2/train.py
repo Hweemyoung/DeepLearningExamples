@@ -342,7 +342,7 @@ def main():
 
     LOGGER.log(key=tags.RUN_START)
     run_start_time = time.time()
-
+# get model
     model_config = models.get_model_config(model_name, args)
     model = models.get_model(model_name, model_config,
                              to_cuda=True,
@@ -351,6 +351,7 @@ def main():
     if not args.amp_run and distributed_run:
         model = DDP(model)
 
+# optim
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate,
                                  weight_decay=args.weight_decay)
 
@@ -364,6 +365,7 @@ def main():
     except AttributeError:
         sigma = None
 
+# loss function
     criterion = loss_functions.get_loss_function(model_name, sigma)
 
     try:
@@ -373,9 +375,16 @@ def main():
 
     collate_fn = data_functions.get_collate_function(
         model_name, n_frames_per_step)
+
+# dataset, dataloader
+    """
+    1) loads audio,text pairs
+    2) normalizes text and converts them to sequences of one-hot vectors
+    3) computes mel-spectrograms from audio files.
+    """
     trainset = data_functions.get_data_loader(
-        model_name, args.dataset_path, args.training_files, args)
-    train_sampler = DistributedSampler(trainset) if distributed_run else None
+        model_name, args.dataset_path, args.training_files, args) # utils.data.Dataset
+    train_sampler = DistributedSampler(trainset) if distributed_run else None # sampler
     train_loader = DataLoader(trainset, num_workers=1, shuffle=False,
                               sampler=train_sampler,
                               batch_size=args.batch_size, pin_memory=False,
@@ -387,6 +396,7 @@ def main():
     batch_to_gpu = data_functions.get_batch_to_gpu(model_name)
 
     iteration = 0
+## switch to training mode
     model.train()
 
     LOGGER.log(key=tags.TRAIN_LOOP)
@@ -407,7 +417,7 @@ def main():
         # if overflow at the last iteration then do not save checkpoint
         overflow = False
 
-        for i, batch in enumerate(train_loader):
+        for i, batch in enumerate(train_loader): ## iterate train data loader
             print("Batch: {}/{} epoch {}".format(i, len(train_loader), epoch))
             LOGGER.iteration_start()
             iter_start_time = time.time()
@@ -417,12 +427,15 @@ def main():
             adjust_learning_rate(epoch, optimizer, args.learning_rate,
                                  args.anneal_steps, args.anneal_factor)
 
+## initialize grads on the whole model
             model.zero_grad()
+## Tensors to GPU
             x, y, num_items = batch_to_gpu(batch)
-
+## predict
             y_pred = model(x)
+## calc loss
             loss = criterion(y_pred, y)
-
+## ?
             if distributed_run:
                 reduced_loss = reduce_tensor(loss.data, args.world_size).item()
                 reduced_num_items = reduce_tensor(num_items.data, 1).item()
@@ -433,7 +446,7 @@ def main():
                 raise Exception("loss is NaN")
 
             LOGGER.log(key=tags.TRAIN_ITERATION_LOSS, value=reduced_loss)
-
+## add average batch loss to average epoch loss
             train_epoch_avg_loss += reduced_loss
             num_iters += 1
 
@@ -446,10 +459,11 @@ def main():
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     amp.master_params(optimizer), args.grad_clip_thresh)
             else:
+## calc grads
                 loss.backward()
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     model.parameters(), args.grad_clip_thresh)
-
+## update param
             optimizer.step()
 
             iteration += 1
@@ -479,13 +493,13 @@ def main():
         LOGGER.log(key="epoch_time", value=epoch_time)
 
         LOGGER.log(key=tags.EVAL_START, value=epoch)
-
+## evaluate after every training epoch
         validate(model, criterion, valset, iteration,
                  args.batch_size, args.world_size, collate_fn,
                  distributed_run, args.rank, batch_to_gpu)
 
         LOGGER.log(key=tags.EVAL_STOP, value=epoch)
-
+## save ckpt
         if (epoch % args.epochs_per_checkpoint == 0) and args.rank == 0:
             checkpoint_path = os.path.join(
                 args.output_directory, "checkpoint_{}_{}".format(model_name, epoch))
@@ -494,6 +508,7 @@ def main():
                         args.tacotron2_checkpoint, args.phrase_path,
                         os.path.join(args.output_directory, "sample_{}_{}.wav".format(model_name, iteration)), args.sampling_rate)
 
+## after full iterations
         LOGGER.epoch_stop()
 
     run_stop_time = time.time()
