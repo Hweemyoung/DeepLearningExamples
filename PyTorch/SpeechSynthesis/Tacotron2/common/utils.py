@@ -32,8 +32,11 @@ import os
 
 
 def get_mask_from_lengths(lengths):
+## 1. figure out the maximum length among the outputs
     max_len = torch.max(lengths).item()
+## 2. torch.arange.Size([max_len])
     ids = torch.arange(0, max_len, out=torch.cuda.LongTensor(max_len))
+## 3.
     mask = (ids < lengths.unsqueeze(1)).byte()
     return mask
 

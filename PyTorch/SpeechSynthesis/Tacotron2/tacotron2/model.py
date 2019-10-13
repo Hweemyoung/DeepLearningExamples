@@ -580,17 +580,18 @@ class Tacotron2(nn.Module):
     def forward(self, inputs):
         inputs, input_lengths, targets, max_len, output_lengths = inputs
         input_lengths, output_lengths = input_lengths.data, output_lengths.data
-
+## 1. embed inputs
         embedded_inputs = self.embedding(inputs).transpose(1, 2)
-
+## 2. embeddings to encoder
         encoder_outputs = self.encoder(embedded_inputs, input_lengths)
-
+## 3. encodings to decoder
         mel_outputs, gate_outputs, alignments = self.decoder(
             encoder_outputs, targets, memory_lengths=input_lengths)
-
+## 4. decodings to postnet
         mel_outputs_postnet = self.postnet(mel_outputs)
+## 4.1 simple addition of original mel-outputs and postnet-mel-ouputs
         mel_outputs_postnet = mel_outputs + mel_outputs_postnet
-
+## 5. mask the outputs if needed and return
         return self.parse_output(
             [mel_outputs, mel_outputs_postnet, gate_outputs, alignments],
             output_lengths)

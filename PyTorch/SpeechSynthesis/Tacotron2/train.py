@@ -382,6 +382,7 @@ def main():
     2) normalizes text and converts them to sequences of one-hot vectors
     3) computes mel-spectrograms from audio files.
     """
+## dataset.item() returns (text, mel, len_text)
     trainset = data_functions.get_data_loader(
         model_name, args.dataset_path, args.training_files, args) # utils.data.Dataset
     train_sampler = DistributedSampler(trainset) if distributed_run else None # sampler
@@ -432,6 +433,7 @@ def main():
 ## Tensors to GPU
             x, y, num_items = batch_to_gpu(batch)
 ## predict
+## nn.Module.__call__(*input) == nn.Module.forward(*input)
             y_pred = model(x)
 ## calc loss
             loss = criterion(y_pred, y)
