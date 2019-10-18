@@ -38,6 +38,13 @@ from common.layers import ConvNorm, LinearNorm
 from common.utils import to_gpu, get_mask_from_lengths
 
 
+class ReferenceEncoder(nn.Module):
+    def __init__(self):
+        super(ReferenceEncoder, self).__init__()
+
+    def forward(self, reference_signal):
+        prosody_embedding = ConvNorm
+
 class LocationLayer(nn.Module):
     def __init__(self, attention_n_filters, attention_kernel_size,
                  attention_dim):
@@ -62,6 +69,7 @@ class Attention(nn.Module):
                  attention_dim, attention_location_n_filters,
                  attention_location_kernel_size):
         super(Attention, self).__init__()
+        ## LinearNorm: nn.Linear(input_size, output_size, ...)
         self.query_layer = LinearNorm(attention_rnn_dim, attention_dim,
                                       bias=False, w_init_gain='tanh')
         self.memory_layer = LinearNorm(embedding_dim, attention_dim, bias=False,
@@ -86,10 +94,11 @@ class Attention(nn.Module):
         alignment (batch, max_time)
         """
 
-        processed_query = self.query_layer(query.unsqueeze(1))
+        processed_query = self.query_layer(query.unsqueeze(1)) #Linear
+        ##location_layer: Conv -> Linear
         processed_attention_weights = self.location_layer(attention_weights_cat)
-        energies = self.v(torch.tanh(
-            processed_query + processed_attention_weights + processed_memory))
+        ## self.v: attention_dim -> 1
+        energies = self.v(torch.tanh(processed_query + processed_attention_weights + processed_memory)) # Linear
 
         energies = energies.squeeze(-1)
         return energies
@@ -112,6 +121,7 @@ class Attention(nn.Module):
             alignment.data.masked_fill_(mask, self.score_mask_value)
 
         attention_weights = F.softmax(alignment, dim=1)
+        ## batch matrix multiplication: case-wise matmul
         attention_context = torch.bmm(attention_weights.unsqueeze(1), memory)
         attention_context = attention_context.squeeze(1)
 
@@ -390,22 +400,33 @@ class Decoder(nn.Module):
         """
         cell_input = torch.cat((decoder_input, self.attention_context), -1)
 
+## 1. attention_rnn
+## self.attention_rnn = nn.LSTMCell(prenet_dim + encoder_embedding_dim, attention_rnn_dim)
+## hidden = results from activation
         self.attention_hidden, self.attention_cell = self.attention_rnn(
             cell_input, (self.attention_hidden, self.attention_cell))
         self.attention_hidden = F.dropout(
             self.attention_hidden, self.p_attention_dropout, self.training)
 
+## attention_weights_cat: tuple, (weights, cumulative weights)
         attention_weights_cat = torch.cat(
             (self.attention_weights.unsqueeze(1),
              self.attention_weights_cum.unsqueeze(1)), dim=1)
+## 2. attention_layer: calc weights for current time step
+## 이번 time step t는 인코더로부터의 hidden representations에 이전 cell state을 broadcast-concat 해서 Linear 레이어를 한번 거쳐서 계산
+## attention weights = softmax(alignment), alignment = Linear(tanh(Linear(decoder_output)+Linear(Conv(attention_weights_concat))+encoder_outputs))
+## attention_context = torch.bmm(attention_weights.unsqueeze(1), memory), attention weights: previous and cumulative weights == 이전 어텐션 출력, 이전 누적 가중치를 통한 어텐션 출력
         self.attention_context, self.attention_weights = self.attention_layer(
-            self.attention_hidden, self.memory, self.processed_memory,
-            attention_weights_cat, self.mask)
+            self.attention_hidden, # hidden representation from attend. RNN, current decoder time step
+            self.memory,
+            self.processed_memory,
+            attention_weights_cat, # weights from, and cumulative weights until previous time step
+            self.mask)
 
-        self.attention_weights_cum += self.attention_weights
+        self.attention_weights_cum += self.attention_weights # update cumulative weights
         decoder_input = torch.cat(
             (self.attention_hidden, self.attention_context), -1)
-
+## 3. decoder rnn
         self.decoder_hidden, self.decoder_cell = self.decoder_rnn(
             decoder_input, (self.decoder_hidden, self.decoder_cell))
         self.decoder_hidden = F.dropout(
@@ -413,8 +434,9 @@ class Decoder(nn.Module):
 
         decoder_hidden_attention_context = torch.cat(
             (self.decoder_hidden, self.attention_context), dim=1)
+## 4. Linear projection: nn.Linear(decoder_rnn_dim + encoder_embedding_dim, mel_channels * n of predicting frames) : [decoder_hidden, attention_
         decoder_output = self.linear_projection(
-            decoder_hidden_attention_context)
+            decoder_hidden_attention_context) ## decoder rnn dim
 
         gate_prediction = self.gate_layer(decoder_hidden_attention_context)
         return decoder_output, gate_prediction, self.attention_weights
@@ -597,7 +619,6 @@ class Tacotron2(nn.Module):
             output_lengths)
 
     def infer(self, inputs, input_lengths):
-
         embedded_inputs = self.embedding(inputs).transpose(1, 2)
         encoder_outputs = self.encoder(embedded_inputs, input_lengths)
         mel_outputs, gate_outputs, alignments, mel_lengths = self.decoder.infer(
@@ -605,7 +626,7 @@ class Tacotron2(nn.Module):
 
         mel_outputs_postnet = self.postnet(mel_outputs)
         mel_outputs_postnet = mel_outputs + mel_outputs_postnet
-
+## No output length
         outputs = self.parse_output(
             [mel_outputs, mel_outputs_postnet, gate_outputs, alignments, mel_lengths])
 

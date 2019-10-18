@@ -26,9 +26,6 @@
 # *****************************************************************************
 
 import torch
-from librosa.filters import mel as librosa_mel_fn
-from common.audio_processing import dynamic_range_compression, dynamic_range_decompression
-from common.stft import STFT
 
 
 class LinearNorm(torch.nn.Module):
@@ -63,7 +60,6 @@ class ConvNorm(torch.nn.Module):
 
     def forward(self, signal):
         return self.conv(signal)
-
 
 class TacotronSTFT(torch.nn.Module):
     def __init__(self, filter_length=1024, hop_length=256, win_length=1024,
