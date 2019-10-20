@@ -15,7 +15,6 @@ from fairseq import distributed_utils, options
 
 from train import main as single_process_main
 
-
 def main(args):
     # Set distributed training parameters for a single node.
     args.distributed_world_size = torch.cuda.device_count()
